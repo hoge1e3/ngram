@@ -1,0 +1,28 @@
+{
+    "scripts": {
+        "test": "npx tsc && node js/test/test-ngram.js",
+        "build-dev": "npx webpack --mode=development",
+        "build": "npx webpack --mode=production"
+    },
+    "main": "ngram.js",
+    "name": "@hoge1e3/ngram",
+    "type": "module",
+    "description": "dynamic n-gram text searcher and completer.",
+    "version": "1.0.0",
+    "dependencies": {
+        "@hoge1e3/counter": "^1.0.2",
+        "@hoge1e3/default-map": "^1.0.7",
+        "assert": "^2.1.0"
+    },
+    "devDependencies": {
+        "ts-loader": "^9.5.1",
+        "typescript": "^5.7.2",
+        "webpack": "^5.96.1",
+        "webpack-cli": "^5.1.4"
+    },
+    "files": [
+        "src",
+        "js",
+        "dist"
+    ]
+}

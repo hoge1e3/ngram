@@ -1,44 +1,45 @@
 // @hoge1e3/ngram
+// ganso is working on current acepad
 import * as assert from "assert";
-// This is naively typed from ganso.js
 import {Counter} from "@hoge1e3/counter";
-import { Key } from "readline";
+import {sleep} from "@hoge1e3/timeout";
 export const EOF="eof";
 export class Document{
-    deleted=false;
-    constructor(public path:string,
-        public content:string,
-        public timeStamp:number=Date.now()){
+    constructor(path,content,timeStamp){
+        this.path=path;
+        this.timeStamp=timeStamp||Date.now();
+        this.content=content;
+        this.deleted=false;
     }
-    at(offset:number){
+    at(offset){
         if(offset==this.content.length)return EOF;
         return this.content[offset];
     }
-    slice(b:number,e:number){
+    slice(b,e){
         return this.content.substring(b,e);
     }
     toString(){
         return this.path;
     }
-    looks(at:number,word:string){
+    looks(at,word){
         return this.content.substring(at,at+word.length)==word;
     }
 }
 export class DocumentSet{
-    root=this.LetterIndex();
-    rank=new RankedList<DocumentIndex>({
-        rankOf(didx: DocumentIndex){
-            let c=1;
-            for(let [doc, offsets] of didx.map){
-                c+=offsets.length;
-            }
-            return Math.floor(Math.log(c));
-        }
-    });
-    path2doc=new Map<string,Document>();
     constructor (){
+        this.root=this.LetterIndex();
+        this.rank=new RankedList({
+            rankOf(didx){
+                let c=1;
+                for(let [doc, offsets] of didx.map){
+                    c+=offsets.length;
+                }
+                return Math.floor(Math.log(c));
+            }
+        });
+        this.path2doc=new Map();
     }
-    addDocument(doc:Document){
+    addDocument(doc){
         let old=this.path2doc.get(doc.path);
         if(old){
             old.deleted=true;
@@ -48,13 +49,13 @@ export class DocumentSet{
             this.add(this.root,doc,i);
         }
     }
-    find(word:string){
+    find(word){
         return find(word,this.root);
     }
-    async predict(doc:Document,offset:number){
+    async predict(doc,offset){
         return await predict(doc,offset,this.root);
     }
-    predictWord(doc:Document,offset:number){
+    predictWord(doc,offset){
         return predictWord(doc,offset,this.root);
     }
     expand(){
@@ -63,7 +64,7 @@ export class DocumentSet{
         if(!didx)return ;
         return this.toLetterIndex(didx);
     }
-    calcCount(idx:Index){
+    calcCount(idx){
         idx=idx||this.root;
         let c=0;
         if(keyIsDocument(idx)){
@@ -80,27 +81,26 @@ export class DocumentSet{
     }
 
     //private
-    LetterIndex():LetterIndex{
-        let lidx:LetterIndex={count:0, map:new Map(), keyType: "chr"};
+    LetterIndex(){
+        let lidx=new Index("chr");
         return lidx;
     }
-    DocumentIndex(isEof:boolean):DocumentIndex{
-        let didx:DocumentIndex={count:0, map:new Map(), keyType: "doc",isEof};
+    DocumentIndex(){
+        let didx=new Index("doc");
         return didx;
     }
-    addChr(map:Map<string,Index>,doc:Document, offset:number){
+    addChr(map,doc,offset){
         let ch=doc.at(offset);
         if(ch==null)return ;
         let idx=map.get(ch);
         if(!idx){
-            const didx=this.DocumentIndex(ch===EOF);
-            map.set(ch,didx);
-            //if(ch==EOF)didx.isEof=true;
-            idx=didx;
+            idx=this.DocumentIndex();
+            map.set(ch,idx);
+            if(ch==EOF)idx.isEof=true;
         }
         this.add(idx,doc,offset+1);
     }
-    addDoc(didx:DocumentIndex,doc:Document,offset:number){
+    addDoc(didx,doc,offset){
         if(!didx.isEof)this.rank.requestUpdate(didx);
         let map=didx.map;
         let offsets=map.get(doc);
@@ -117,16 +117,16 @@ export class DocumentSet{
         
         offsets.push(offset);
     }
-    add(idx:Index,doc:Document,offset:number){
+    add(idx,doc,offset){
         if(keyIsLetter(idx)){
             this.addChr(idx.map,doc,offset);
-        } else /*if(keyIsDocument(idx))*/{
+        }else{
             this.addDoc(idx,doc,offset);
         }
     }
-    toLetterIndex(didx:DocumentIndex){
+    toLetterIndex(didx){
         if(didx.isEof)return ;
-        let nmap=new Map<string,Index>();
+        let nmap=new Map();
         let c=0;
         for(let [doc, offsets] of didx.map){
             for (let o of offsets){
@@ -135,59 +135,37 @@ export class DocumentSet{
             }
         }
         this.rank.remove(didx);
-        const nidx=didx as unknown as LetterIndex;
-        nidx.map=nmap;
-        nidx.keyType="chr";
+        didx.map=nmap;
+        didx.keyType="chr";
         return c;
     }
 }
-type FindIndexResult={
-    index:Index;
-    found:string;
-    rest:string;
-};
-function findIndex(word:string,lidx:LetterIndex):FindIndexResult{
+function findIndex(word,idx){
     // index is LetterIndex && rest => not found
     // index is DocumentIndex && rest => depends on index content
     // index is LetterIndex && !rest => found
     // index is DocumentIndex && !rest => found
-    let i:number;
+    let i;
     for(i=0;i<word.length;i++){
-        let _idx=lidx.map.get(word[i]);
+        let _idx=idx.map.get(word[i]);
         if(!_idx)return {
-            // index is LetterIndex && rest => not found
-            index:lidx,
+            index:idx,
             found:word.substring(0,i),
             rest:word.substring(i),
         };
-        const idx:Index=_idx;
+        idx=_idx;
         if(keyIsDocument(idx)){
             i++;
-            // index is DocumentIndex && rest => depends on index content
-            // index is DocumentIndex && !rest => found
-            return {
-                index:idx,
-                found:word.substring(0,i),
-                rest:word.substring(i),
-            };
+            break;
         }
-        lidx=idx;
     }
-    // index is LetterIndex && !rest => found
     return {
-        index:lidx,
+        index:idx,
         found:word.substring(0,i),
         rest:word.substring(i),
     };
-    
 }
-type ResultDetail={
-    document:Document;
-    offset:number;
-    prefix:string;
-    eof:boolean;
-};
-function *resultsFrom(index:Index,prefix=""):Generator<ResultDetail> {
+function *resultsFrom(index,prefix=""){
     if(keyIsDocument(index)){
         for(let [d,os] of index.map){
             for(let o of os){
@@ -205,11 +183,7 @@ function *resultsFrom(index:Index,prefix=""):Generator<ResultDetail> {
         }
     }
 }
-type FindResult={
-    document:Document;
-    offset:number;
-};
-function *find(word:string ,rootidx: LetterIndex):Generator<FindResult> {
+function *find(word,rootidx){
     let {index,found,rest}=findIndex(word,rootidx);
     if(keyIsLetter(index)&&rest)return ;
     if(!rest){
@@ -235,9 +209,9 @@ function *find(word:string ,rootidx: LetterIndex):Generator<FindResult> {
         }            
     }
 }
-async function predict(doc:Document,offset:number,rootidx:LetterIndex):Promise<[string,number][]>{
+async function predict(doc,offset,rootidx){
     let p=1;
-    let c=new Counter<string>();
+    let c=new Counter();
     while(offset-p>=0){
         let word=doc.content.substring(offset-p,offset);
         let {index,found,rest}=findIndex(word,rootidx);
@@ -246,21 +220,17 @@ async function predict(doc:Document,offset:number,rootidx:LetterIndex):Promise<[
         let sc=p+1;//index.map.size;
         for(let [ch,i] of index.map){
             if(ch===EOF)continue;
-            let sc2=i.count||1;
+            let sc2=index.map.get(ch).count||1;
             c.set(ch,sc-1/sc2);
         }
         p++;
     }
     return c.descend();
 }
-function isAlpha(a:string){
+function isAlpha(a){
     return a.match(/^\w$/);
 }
-export type PredictionResult={
-    pre:string;
-    post:string;
-};
-function *predictWord(doc:Document,offset:number,rootidx:LetterIndex):Generator<PredictionResult>{
+function *predictWord(doc,offset,rootidx){
     let oo=offset;
     offset--;
     while(offset>=0&&isAlpha(doc.at(offset)))offset--;
@@ -279,7 +249,7 @@ function *predictWord(doc:Document,offset:number,rootidx:LetterIndex):Generator<
     }
     
 }
-function* traverseWords(idx:Index,prefix=""):Generator<string> {
+function* traverseWords(idx,prefix=""){
     if(keyIsDocument(idx)){
         yield prefix;return ;
     }
@@ -292,40 +262,37 @@ function* traverseWords(idx:Index,prefix=""):Generator<string> {
     }
     
 }
-//let thresh=10;
-//type KeyType="doc"|"chr";
-function keyIsDocument(idx:Index):idx is DocumentIndex{
+let thresh=10;
+function keyIsDocument(idx){
     return idx.keyType=="doc";
 }
-function keyIsLetter(idx:Index):idx is LetterIndex{
+function keyIsLetter(idx){
     return idx.keyType=="chr";
 }
-type RankOf<T>=(item:T)=>number;
-class RankedList<T>{
-    byRank=[] as (Set<T>|null)[];
-    rerank=new Set<T>();
-    rankOf: RankOf<T>;
-    constructor ({rankOf}:{rankOf:RankOf<T>}){
+class RankedList{
+    constructor ({rankOf}){
         this.rankOf=rankOf;
+        this.byRank=[];
+        this.rerank=new Set();
     }
     updateAll(){
         for(let item of this.rerank){
             this.add(item);
         }
-        this.rerank=new Set<T>();
+        this.rerank=new Set();
     }
-    requestUpdate(item:T){
+    requestUpdate(item){
         if(this.rerank.has(item))return ;
         this.remove(item);
         this.rerank.add(item);
     }
-    add(item:T){
+    add(item){
         let r=this.rankOf(item);
         let b=this.byRank;
         b[r]=b[r]||new Set();
         b[r].add(item);
     }
-    remove(item:T){
+    remove(item){
         let r=this.rankOf(item);
         let b=this.byRank;
         b[r]=b[r]||new Set();
@@ -334,35 +301,21 @@ class RankedList<T>{
     pick(){
         let b=this.byRank;
         for(let i=b.length-1;i>=0;i--){
-            const bi=b[i];
-            if(!bi||bi.size==0){
+            if(!b[i]||b[i].size==0){
                 b[i]=null;
                 if(i==b.length-1)b.length=i;
                 continue;
             }
-            for(let e of bi){
-                bi.delete(e);
+            for(let e of b[i]){
+                b[i].delete(e);
                 return e;
             }
         }
     }
 }
-type Index=LetterIndex|DocumentIndex;
-/*class Index{
-    map=new Map();    
-    count=0;
-    constructor(public keyType:KeyType){
+class Index{
+    constructor(keyType){
+        this.keyType=keyType;
+        this.map=new Map();    
     }
-}*/
-interface LetterIndex {
-    count:number;
-    //isEof?: boolean;
-    keyType: "chr";
-    map:Map<string, Index>;
-};
-interface DocumentIndex {
-    count:number;
-    isEof: boolean;
-    keyType: "doc";
-    map:Map<Document, number[]>;
 }

@@ -5,6 +5,7 @@ function echo(...args:any[]){
     console.log(...args);
 }
 export async function main(){
+    //                      01234567890123456789012
     let d=new Document("A","abcc deff adc eedef abc");
     let s=new DocumentSet();
     s.addDocument(d);
@@ -15,14 +16,14 @@ export async function main(){
     echo(scale, d.content.length);
     echo(d.content);
     //traverse(s.root);
-    /*for(let i=0;i<15;i++){
+    for(let i=0;i<15;i++){
         echo(s.expand());
         s.calcCount();
         for(let word of allSubstr(d.content)){
             //echo(word);
             find(s,word);
         }
-    }*/
+    }
     //traverse(s.root);
     //allWords(s.root);
     //await predict(s);
